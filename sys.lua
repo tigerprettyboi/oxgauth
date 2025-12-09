@@ -1,7 +1,7 @@
 --[[
     ╔══════════════════════════════════════════╗
     ║      SPECTRE HUB - MAIN LOADER           ║
-    ║   Secure Version with API Secret         ║
+    ║   Direct Firestore Version               ║
     ╚══════════════════════════════════════════╝
     
     ไฟล์นี้จะถูก load จาก GitHub
@@ -12,8 +12,7 @@
 -- CONFIGURATION (แก้ไขตรงนี้)
 -- ============================================
 local CONFIG = {
-    API_URL = "https://oxgauth.web.app/api.html",
-    API_SECRET = "s913919191319252121",  -- ต้องตรงกับใน Firebase config/api
+    PROJECT_ID = "oxgauth",  -- Firebase Project ID
     MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/tigerprettyboi/spectrehub/refs/heads/main/loader.lua"
 }
 
@@ -53,28 +52,32 @@ local function getHWID()
     return "fallback-" .. tostring(game.PlaceId) .. "-" .. tostring(game.JobId):sub(1, 8)
 end
 
--- URL Encode
-local function urlEncode(str)
-    if str then
-        str = string.gsub(str, "\n", "\r\n")
-        str = string.gsub(str, "([^%w _%%%-%.~])", function(c)
-            return string.format("%%%02X", string.byte(c))
-        end)
-        str = string.gsub(str, " ", "+")
-    end
-    return str
+-- Check if date is expired (check at END of day, same as web dashboard)
+local function isExpired(expiryDate)
+    if not expiryDate then return false end
+    
+    local y, m, d = expiryDate:match("(%d+)-(%d+)-(%d+)")
+    if not y then return false end
+    
+    -- Check at END of day (23:59:59) to match web dashboard
+    local expiryTime = os.time({
+        year = tonumber(y),
+        month = tonumber(m),
+        day = tonumber(d),
+        hour = 23,
+        min = 59,
+        sec = 59
+    })
+    
+    return os.time() > expiryTime
 end
 
--- Validate License via Web API
+-- Validate License
 local function validateLicense()
     local hwid = getHWID()
-    
     local url = string.format(
-        "%s?key=%s&hwid=%s&secret=%s",
-        CONFIG.API_URL,
-        urlEncode(LICENSE_KEY),
-        urlEncode(hwid),
-        urlEncode(CONFIG.API_SECRET)
+        "https://firestore.googleapis.com/v1/projects/%s/databases/(default)/documents/licenseKeys",
+        CONFIG.PROJECT_ID
     )
     
     local success, response = pcall(function()
@@ -85,27 +88,60 @@ local function validateLicense()
         })
     end)
     
-    if not success then
+    if not success or response.StatusCode ~= 200 then
         return false, "CONNECTION_ERROR", "Failed to connect to server"
-    end
-    
-    if response.StatusCode ~= 200 then
-        return false, "SERVER_ERROR", "Server returned " .. tostring(response.StatusCode)
     end
     
     local ok, data = pcall(function()
         return HttpService:JSONDecode(response.Body)
     end)
     
-    if not ok or not data then
-        return false, "PARSE_ERROR", "Invalid server response"
+    if not ok or not data.documents then
+        return false, "PARSE_ERROR", "Invalid response"
     end
     
-    if data.valid then
-        return true, "VALID", data.expiresAt or "Never"
-    else
-        return false, data.error or "UNKNOWN", data.message or "Validation failed"
+    -- Find license
+    for _, doc in pairs(data.documents) do
+        local fields = doc.fields
+        if fields and fields.key and fields.key.stringValue == LICENSE_KEY then
+            
+            -- Check active
+            local isActive = not fields.active or fields.active.booleanValue ~= false
+            if not isActive then
+                return false, "DEACTIVATED", "License deactivated"
+            end
+            
+            -- Check expiry (FIXED: uses END of day check)
+            local expiryDate = fields.expiryDate and fields.expiryDate.stringValue
+            if expiryDate and isExpired(expiryDate) then
+                return false, "EXPIRED", "License expired on " .. expiryDate
+            end
+            
+            -- Check HWID
+            local storedHwid = fields.hwid and fields.hwid.stringValue
+            if storedHwid and storedHwid ~= "" and storedHwid ~= hwid then
+                return false, "HWID_MISMATCH", "Device not authorized"
+            end
+            
+            -- Bind HWID if not bound
+            if not storedHwid or storedHwid == "" then
+                pcall(function()
+                    reqFunc({
+                        Url = "https://firestore.googleapis.com/v1/" .. doc.name .. "?updateMask.fieldPaths=hwid",
+                        Method = "PATCH",
+                        Headers = { ["Content-Type"] = "application/json" },
+                        Body = HttpService:JSONEncode({
+                            fields = { hwid = { stringValue = hwid } }
+                        })
+                    })
+                end)
+            end
+            
+            return true, "VALID", expiryDate or "Never"
+        end
     end
+    
+    return false, "NOT_FOUND", "Invalid license key"
 end
 
 -- ============================================
@@ -114,7 +150,7 @@ end
 
 print("")
 print("╔═══════════════════════════════════════╗")
-print("║        SPECTRE HUB v3.0 SECURE        ║")
+print("║        SPECTRE HUB v3.1               ║")
 print("╠═══════════════════════════════════════╣")
 print("║  Validating license...                ║")
 print("╚═══════════════════════════════════════╝")
