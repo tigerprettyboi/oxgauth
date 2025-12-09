@@ -1,7 +1,7 @@
 --[[
     ╔══════════════════════════════════════════╗
     ║      SPECTRE HUB - MAIN LOADER           ║
-    ║   Secure Version with HMAC Signature     ║
+    ║   Secure Version with API Secret         ║
     ╚══════════════════════════════════════════╝
     
     ไฟล์นี้จะถูก load จาก GitHub
@@ -53,62 +53,6 @@ local function getHWID()
     return "fallback-" .. tostring(game.PlaceId) .. "-" .. tostring(game.JobId):sub(1, 8)
 end
 
--- Simple HMAC-SHA256 implementation for Roblox
--- Note: This is a simplified version, works with most executors
-local function hmacSha256(message, secret)
-    -- Use bit32 for bitwise operations
-    local function strToBytes(str)
-        local bytes = {}
-        for i = 1, #str do
-            bytes[i] = string.byte(str, i)
-        end
-        return bytes
-    end
-    
-    local function xorBytes(bytes, val)
-        local result = {}
-        for i = 1, #bytes do
-            result[i] = bit32.bxor(bytes[i], val)
-        end
-        return result
-    end
-    
-    local function bytesToStr(bytes)
-        local chars = {}
-        for i = 1, #bytes do
-            chars[i] = string.char(bytes[i])
-        end
-        return table.concat(chars)
-    end
-    
-    -- Pad key to 64 bytes
-    local keyBytes = strToBytes(secret)
-    while #keyBytes < 64 do
-        keyBytes[#keyBytes + 1] = 0
-    end
-    if #keyBytes > 64 then
-        keyBytes = {unpack(keyBytes, 1, 64)}
-    end
-    
-    local ipad = xorBytes(keyBytes, 0x36)
-    local opad = xorBytes(keyBytes, 0x5c)
-    
-    -- Simple hash (not cryptographically secure, but works for basic signing)
-    local function simpleHash(data)
-        local hash = 0x811c9dc5
-        for i = 1, #data do
-            hash = bit32.bxor(hash, string.byte(data, i))
-            hash = bit32.band(hash * 0x01000193, 0xFFFFFFFF)
-        end
-        return string.format("%08x", hash)
-    end
-    
-    local innerHash = simpleHash(bytesToStr(ipad) .. message)
-    local outerHash = simpleHash(bytesToStr(opad) .. innerHash)
-    
-    return outerHash
-end
-
 -- URL Encode
 local function urlEncode(str)
     if str then
@@ -121,25 +65,16 @@ local function urlEncode(str)
     return str
 end
 
--- Get current timestamp in milliseconds
-local function getTimestamp()
-    return tostring(math.floor(os.time() * 1000))
-end
-
 -- Validate License via Web API
 local function validateLicense()
     local hwid = getHWID()
-    local timestamp = getTimestamp()
-    local message = timestamp .. ":" .. LICENSE_KEY .. ":" .. hwid
-    local signature = hmacSha256(message, CONFIG.API_SECRET)
     
     local url = string.format(
-        "%s?key=%s&hwid=%s&t=%s&sig=%s",
+        "%s?key=%s&hwid=%s&secret=%s",
         CONFIG.API_URL,
         urlEncode(LICENSE_KEY),
         urlEncode(hwid),
-        urlEncode(timestamp),
-        urlEncode(signature)
+        urlEncode(CONFIG.API_SECRET)
     )
     
     local success, response = pcall(function()
