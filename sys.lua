@@ -52,24 +52,16 @@ local function getHWID()
     return "fallback-" .. tostring(game.PlaceId) .. "-" .. tostring(game.JobId):sub(1, 8)
 end
 
--- Check if date is expired (check at END of day, same as web dashboard)
+-- Check if date is expired (compare date strings directly to avoid timezone issues)
 local function isExpired(expiryDate)
     if not expiryDate then return false end
     
-    local y, m, d = expiryDate:match("(%d+)-(%d+)-(%d+)")
-    if not y then return false end
+    -- Get current date in YYYY-MM-DD format
+    local currentDate = os.date("%Y-%m-%d")
     
-    -- Check at END of day (23:59:59) to match web dashboard
-    local expiryTime = os.time({
-        year = tonumber(y),
-        month = tonumber(m),
-        day = tonumber(d),
-        hour = 23,
-        min = 59,
-        sec = 59
-    })
-    
-    return os.time() > expiryTime
+    -- Compare strings directly (works because format is YYYY-MM-DD)
+    -- Expired if current date > expiry date
+    return currentDate > expiryDate
 end
 
 -- Validate License
@@ -111,31 +103,10 @@ local function validateLicense()
                 return false, "DEACTIVATED", "License deactivated"
             end
             
-            -- Check expiry (FIXED: uses END of day check)
+            -- Check expiry
             local expiryDate = fields.expiryDate and fields.expiryDate.stringValue
-            
-            -- DEBUG: Show expiry info
-            print("[DEBUG] Expiry Date from DB:", expiryDate or "nil")
-            print("[DEBUG] Current Time (os.time):", os.time())
-            
-            if expiryDate then
-                local y, m, d = expiryDate:match("(%d+)-(%d+)-(%d+)")
-                if y then
-                    local expiryTime = os.time({
-                        year = tonumber(y),
-                        month = tonumber(m),
-                        day = tonumber(d),
-                        hour = 23,
-                        min = 59,
-                        sec = 59
-                    })
-                    print("[DEBUG] Expiry Time (end of day):", expiryTime)
-                    print("[DEBUG] Is Expired?:", os.time() > expiryTime)
-                    
-                    if os.time() > expiryTime then
-                        return false, "EXPIRED", "License expired on " .. expiryDate
-                    end
-                end
+            if isExpired(expiryDate) then
+                return false, "EXPIRED", "License expired on " .. expiryDate
             end
             
             -- Check HWID
