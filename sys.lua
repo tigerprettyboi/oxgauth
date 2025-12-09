@@ -113,8 +113,29 @@ local function validateLicense()
             
             -- Check expiry (FIXED: uses END of day check)
             local expiryDate = fields.expiryDate and fields.expiryDate.stringValue
-            if expiryDate and isExpired(expiryDate) then
-                return false, "EXPIRED", "License expired on " .. expiryDate
+            
+            -- DEBUG: Show expiry info
+            print("[DEBUG] Expiry Date from DB:", expiryDate or "nil")
+            print("[DEBUG] Current Time (os.time):", os.time())
+            
+            if expiryDate then
+                local y, m, d = expiryDate:match("(%d+)-(%d+)-(%d+)")
+                if y then
+                    local expiryTime = os.time({
+                        year = tonumber(y),
+                        month = tonumber(m),
+                        day = tonumber(d),
+                        hour = 23,
+                        min = 59,
+                        sec = 59
+                    })
+                    print("[DEBUG] Expiry Time (end of day):", expiryTime)
+                    print("[DEBUG] Is Expired?:", os.time() > expiryTime)
+                    
+                    if os.time() > expiryTime then
+                        return false, "EXPIRED", "License expired on " .. expiryDate
+                    end
+                end
             end
             
             -- Check HWID
